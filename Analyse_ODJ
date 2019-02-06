@@ -1,0 +1,108 @@
+# title: "Activite Vigie Nature Ecole"
+# author: "Simon Benateau"
+# date: "5 fevrier 2019"
+
+## Resume rapide
+
+#L'idee de l'activite est de montrer l'effet de la saisonnalite sur l'abondance des oiseaux.
+#Il faut donc charger des donnees, les verifier rapidement, calculer l'abondance par espece, la richesse et la temperature par mois et par departement pour ensuite representer les donnees.
+#Il y a pas mal de choses qu'il faudrait verifier en plus mais pour le moment c'est un peu limite (par exemple verifier que l'effort d'echantillonnage est constant, etc...).  
+#En fait je pense que nous allons devoir creer de nouvelles activites car aucune, pour le moment, n'inclue vraiment d'analyses et j'ai l'impression que ce n'est pas vraiment le job de galaxy-duplo de ne faire que des representations graphiques. Cependant je vais devoir discuter un peu de comment on fait pour ne pas avoir besoin d'un master en stat pour analyser les donnees car c'est un peu l'effet que me font ces donnees. L'analyse de series temporelles cela demande quand meme de verifier pas mal de choses et reflechir aux biais d'echantillonnage est clairement important.  
+
+#Chargement packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# ajout d'une fonction pour le calcul de l'erreur standard
+se <- function(x) sqrt(var(x, na.rm = TRUE)/length(x))
+
+# Chargement des donnees
+# - - - - - - - - - - - -
+donneesODJ <- read.csv("data/vne_oiseaux.csv", sep = "\t", encoding = "latin1")
+donneesTemp <- read.csv("data/vne_oiseaux_temp.csv", sep = "\t", 
+                        encoding = "latin1", dec = ',')
+
+# Verification de l'importation des donnees
+# - - - - - - - - - - - -
+# look at the first lines
+#head(donneesODJ)
+#head(donneesTemp)
+# get headers
+#colnames(donneesODJ)
+# Resume des differentes variables (erreurs d'importation)
+#summary(donneesODJ)
+#summary(donneesTemp)
+
+#Nettoyage
+# - - - - - - - - - - - -
+# supprimer les donnees avec pour departement "France"
+donneesODJ <- donneesODJ[!donneesODJ[, "Departement"] == "France", ]
+# Supprimer la ligne avec 372 mesanges (valeur probablement due a une erreur de saisie)
+donneesODJ_clean <- donneesODJ[!donneesODJ[, "Nombre"] == 372, ]
+# Verifier l'effet de la modification par une representation graphique de la variable
+par(mfrow = c(1,2))
+boxplot(donneesODJ$Nombre, main = "donnees initiales")
+boxplot(donneesODJ_clean$Nombre, main = "donnees nettoyees")
+#recoder le mois en facteur et ajouter un zero pour l'ordre sur le graph
+donneesODJ_clean$Mois <- formatC(donneesODJ_clean$Mois, width = 2, 
+                                 format = "d", flag = "0")
+donneesTemp$Mois <- formatC(donneesTemp$Mois, width = 2, format = "d", flag = "0")
+
+# Resume des donnees
+# - - - - - - - - - - - -
+# calcul de l'abondance moyenne par espece, par date et par departement
+donnesAbondanceEspeceDepartement <- donneesODJ_clean %>%
+  # Grouper le mois et l'annee en une seule variable
+  mutate(date = paste(Annee, Mois)) %>%
+  # avoir les donnees par espece, departement et date
+  group_by(Espece, Departement, date) %>% 
+  # calculer la moyenne et l'erreur standard de l'abondance
+  summarise(Abondance = mean(Nombre, na.rm = TRUE), AbondanceSE = se(Nombre)) 
+
+# obtenir la richesse specifique (nombre d'especes) par mois et par departement
+donnesRichesseDepartement <- donnesAbondanceEspeceDepartement %>%
+  # selectioner les colonnes Espece, date, departement
+  select(Espece, date, Departement) %>%
+  # avoir les donnees par departement et date
+  group_by(Departement, date) %>%
+  # ne garder que les lignes differentes
+  distinct() %>%
+  # compter ces lignes (logiquement on compte les especes)
+  summarise(Richesse = n())
+
+# obtenir la moyenne de temperature par mois et par departement
+donneesTemp <- donneesTemp %>%
+  # Grouper le mois et l'annee en une seule variable
+  mutate(date = paste(Annee, Mois)) %>%
+  # changer l'organisation du jeu de donnee pour que la temperature 
+  # soit dans une seule colonne et que le departement (actuellement header) soit un facteur
+  gather("departement", "temperature", 5:6) %>%
+  # avoir les donnees par departement et date
+  group_by(date,departement) %>%
+  # obtenir la moyenne de temperature
+  summarise(temperature = mean(temperature))
+
+# Representations graphiques
+# - - - - - - - - - - - -
+# richesse en fonction du departement
+ggplot(donnesRichesseDepartement, aes(x = date, y = Richesse, group = Departement))+
+  geom_bar(stat = "identity", aes(fill = Departement), position = position_dodge2())+
+  facet_grid(.~Departement)+
+  theme(axis.text.x = element_text(angle = 90))
+
+
+# serie temporelle de temperature en fonction du departement
+ggplot(donneesTemp, aes(x = date, y = temperature, group = departement))+
+  geom_point(aes(colour = departement)) +
+  geom_line(aes(colour = departement))+
+  theme(axis.text.x = element_text(angle = 90))
+
+# representation de l'abondance par espece en fonction du temps
+ggplot(donnesAbondanceEspeceDepartement, aes(x = date, y = Abondance))+
+  geom_bar(stat = "identity", aes(fill = Departement), position=position_dodge2() )+
+  geom_errorbar(aes(x= date, ymin = Abondance - AbondanceSE, 
+                    ymax = Abondance + AbondanceSE, group = date),
+                position=position_dodge2(), size = 0.2)+
+  facet_grid(Espece~.,scales="free") +
+  theme(axis.text.x = element_text(angle = 90))
